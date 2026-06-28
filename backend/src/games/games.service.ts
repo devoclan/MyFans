@@ -1,8 +1,18 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  HttpException,
+  HttpStatus,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { Game, GameStatus } from './entities/game.entity';
 import { Player } from './entities/player.entity';
+
+export interface GameErrorResponse {
+  statusCode: number;
+  error: string;
+  message: string;
+}
 
 @Injectable()
 export class GamesService {
@@ -14,6 +24,14 @@ export class GamesService {
     private dataSource: DataSource,
   ) {}
 
+  private throwConsistentError(
+    status: HttpStatus,
+    error: string,
+    message: string,
+  ): never {
+    throw new HttpException({ statusCode: status, error, message }, status);
+  }
+
   async joinGame(gameId: string, userId: string): Promise<Player> {
     return await this.dataSource.transaction(async (manager) => {
       const game = await manager.findOne(Game, {
@@ -23,15 +41,27 @@ export class GamesService {
       });
 
       if (!game) {
-        throw new NotFoundException('Game not found');
+        this.throwConsistentError(
+          HttpStatus.NOT_FOUND,
+          'Not Found',
+          'Game not found',
+        );
       }
 
       if (game.status !== GameStatus.PENDING) {
-        throw new BadRequestException('Game is not in PENDING status');
+        this.throwConsistentError(
+          HttpStatus.BAD_REQUEST,
+          'Bad Request',
+          'Game is not in PENDING status',
+        );
       }
 
       if (game.players.length >= game.number_of_players) {
-        throw new BadRequestException('Game is full');
+        this.throwConsistentError(
+          HttpStatus.BAD_REQUEST,
+          'Bad Request',
+          'Game is full',
+        );
       }
 
       const existingPlayer = await manager.findOne(Player, {
@@ -39,7 +69,11 @@ export class GamesService {
       });
 
       if (existingPlayer) {
-        throw new BadRequestException('Player already joined this game');
+        this.throwConsistentError(
+          HttpStatus.CONFLICT,
+          'Conflict',
+          'Player already joined this game',
+        );
       }
 
       const turnOrder = game.game_settings.randomize_turn_order

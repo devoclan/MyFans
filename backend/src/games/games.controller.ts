@@ -13,7 +13,9 @@ export class GamesController {
   @ApiOperation({ summary: 'Join a game' })
   @ApiParam({ name: 'id', description: 'Game ID' })
   @ApiResponse({ status: 201, description: 'Successfully joined the game' })
+  @ApiResponse({ status: 400, description: 'Game is not in PENDING status or is full' })
   @ApiResponse({ status: 404, description: 'Game not found' })
+  @ApiResponse({ status: 409, description: 'Player already joined this game' })
   async joinGame(@Param('id') id: string, @Body() joinGameDto: JoinGameDto) {
     return await this.gamesService.joinGame(id, joinGameDto.userId);
   }
