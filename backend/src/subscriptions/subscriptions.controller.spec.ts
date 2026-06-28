@@ -310,6 +310,166 @@ describe('SubscriptionsController – listSubscriptions', () => {
   });
 });
 
+describe('SubscriptionsController – checkout & write endpoints', () => {
+  let controller: SubscriptionsController;
+  let service: Record<string, jest.Mock>;
+
+  const fan = `G${'A'.repeat(55)}`;
+  const creator = `G${'B'.repeat(55)}`;
+
+  const mockCheckout = {
+    id: 'checkout-1',
+    fanAddress: fan,
+    creatorAddress: creator,
+    planId: 1,
+    assetCode: 'XLM',
+    assetIssuer: null,
+    amount: '10.00',
+    fee: '0.50',
+    total: '10.50',
+    status: 'PENDING',
+    expiresAt: new Date().toISOString(),
+    txHash: null,
+    error: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  beforeEach(async () => {
+    service = {
+      isSubscriber: jest.fn().mockResolvedValue(true),
+      createCheckout: jest.fn().mockReturnValue(mockCheckout),
+      getCheckout: jest.fn().mockReturnValue(mockCheckout),
+      getPlanSummary: jest.fn().mockReturnValue({ planId: 1, name: 'Basic', price: '10.00' }),
+      getPriceBreakdown: jest.fn().mockReturnValue({ subtotal: '10.00', fee: '0.50', total: '10.50' }),
+      getWalletStatus: jest.fn().mockReturnValue({ XLM: '100.00', USDC: '50.00' }),
+      getTransactionPreview: jest.fn().mockReturnValue({ destination: creator, amount: '10.50' }),
+      validateBalance: jest.fn().mockReturnValue({ sufficient: true }),
+      confirmSubscription: jest.fn().mockResolvedValue({ status: 'COMPLETED' }),
+      failCheckout: jest.fn().mockReturnValue({ status: 'FAILED' }),
+      cancelSubscription: jest.fn().mockResolvedValue({ cancelled: true }),
+      getFanCreatorSubscriptionState: jest.fn(),
+      listSubscriptions: jest.fn(),
+      listCreatorSubscribers: jest.fn(),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [SubscriptionsController],
+      providers: [
+        { provide: SubscriptionsService, useValue: service },
+        FanBearerGuard,
+        Reflector,
+        FeatureFlagGuard,
+        {
+          provide: FeatureFlagsService,
+          useValue: { isEnabled: jest.fn().mockReturnValue(true) },
+        },
+      ],
+    }).compile();
+
+    controller = module.get(SubscriptionsController);
+  });
+
+  it('checkSubscription delegates to isSubscriber and returns shape', async () => {
+    const result = await controller.checkSubscription(fan, creator);
+
+    expect(service.isSubscriber).toHaveBeenCalledWith(fan, creator);
+    expect(result).toEqual({ isSubscriber: true });
+  });
+
+  it('createCheckout delegates to service with all parameters', () => {
+    const body = { fanAddress: fan, creatorAddress: creator, planId: 1, assetCode: 'XLM', assetIssuer: undefined };
+    const result = controller.createCheckout(body, 'testnet');
+
+    expect(service.createCheckout).toHaveBeenCalledWith(fan, creator, 1, 'XLM', undefined, 'testnet');
+    expect(result).toMatchObject({ id: 'checkout-1', status: 'PENDING' });
+  });
+
+  it('createCheckout omits txHash and error from the response', () => {
+    const body = { fanAddress: fan, creatorAddress: creator, planId: 1 };
+    const result = controller.createCheckout(body);
+
+    expect(result).not.toHaveProperty('txHash');
+    expect(result).not.toHaveProperty('error');
+  });
+
+  it('getCheckout delegates to service and includes txHash and error', () => {
+    const result = controller.getCheckout('checkout-1');
+
+    expect(service.getCheckout).toHaveBeenCalledWith('checkout-1');
+    expect(result).toHaveProperty('txHash');
+    expect(result).toHaveProperty('error');
+  });
+
+  it('getPlanSummary fetches checkout then plan summary', () => {
+    const result = controller.getPlanSummary('checkout-1');
+
+    expect(service.getCheckout).toHaveBeenCalledWith('checkout-1');
+    expect(service.getPlanSummary).toHaveBeenCalledWith(mockCheckout.planId);
+    expect(result).toMatchObject({ planId: 1, name: 'Basic' });
+  });
+
+  it('getPriceBreakdown delegates with checkout ID', () => {
+    const result = controller.getPriceBreakdown('checkout-1');
+
+    expect(service.getPriceBreakdown).toHaveBeenCalledWith('checkout-1');
+    expect(result).toMatchObject({ subtotal: '10.00', total: '10.50' });
+  });
+
+  it('getWalletStatus fetches checkout then wallet status using fanAddress', () => {
+    const result = controller.getWalletStatus('checkout-1');
+
+    expect(service.getCheckout).toHaveBeenCalledWith('checkout-1');
+    expect(service.getWalletStatus).toHaveBeenCalledWith(fan);
+    expect(result).toHaveProperty('XLM');
+  });
+
+  it('getTransactionPreview delegates with checkout ID', () => {
+    const result = controller.getTransactionPreview('checkout-1');
+
+    expect(service.getTransactionPreview).toHaveBeenCalledWith('checkout-1');
+    expect(result).toMatchObject({ destination: creator });
+  });
+
+  it('validateBalance fetches checkout then validates with fan address', () => {
+    const result = controller.validateBalance('checkout-1', { assetCode: 'XLM', amount: '10.50' });
+
+    expect(service.getCheckout).toHaveBeenCalledWith('checkout-1');
+    expect(service.validateBalance).toHaveBeenCalledWith(fan, 'XLM', '10.50');
+    expect(result).toEqual({ sufficient: true });
+  });
+
+  it('confirmSubscription delegates with checkout ID and optional txHash', () => {
+    controller.confirmSubscription('checkout-1', { txHash: 'tx-abc' });
+
+    expect(service.confirmSubscription).toHaveBeenCalledWith('checkout-1', 'tx-abc');
+  });
+
+  it('confirmSubscription works without txHash', () => {
+    controller.confirmSubscription('checkout-1', {});
+
+    expect(service.confirmSubscription).toHaveBeenCalledWith('checkout-1', undefined);
+  });
+
+  it('failCheckout delegates with error and optional rejected flag', () => {
+    controller.failCheckout('checkout-1', { error: 'user cancelled', rejected: true });
+
+    expect(service.failCheckout).toHaveBeenCalledWith('checkout-1', 'user cancelled', true);
+  });
+
+  it('failCheckout works without rejected flag', () => {
+    controller.failCheckout('checkout-1', { error: 'timeout' });
+
+    expect(service.failCheckout).toHaveBeenCalledWith('checkout-1', 'timeout', undefined);
+  });
+
+  it('cancelSubscription delegates with fan and creator addresses', () => {
+    controller.cancelSubscription({ fanAddress: fan, creatorAddress: creator });
+
+    expect(service.cancelSubscription).toHaveBeenCalledWith(fan, creator);
+  });
+});
+
 describe('FanBearerGuard', () => {
   let guard: FanBearerGuard;
 
