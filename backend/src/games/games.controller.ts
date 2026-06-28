@@ -1,4 +1,4 @@
-import { Controller, Post, Param, Body, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Param, Body, HttpCode, HttpStatus, UseGuards } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
@@ -6,16 +6,19 @@ import {
   ApiParam,
   ApiBody,
 } from '@nestjs/swagger';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { GamesService } from './games.service';
 import { JoinGameDto } from './dto/join-game.dto';
 
 @ApiTags('games')
+@UseGuards(ThrottlerGuard)
 @Controller({ path: 'games', version: '1' })
 export class GamesController {
   constructor(private readonly gamesService: GamesService) {}
 
   @Post(':id/join')
   @HttpCode(HttpStatus.CREATED)
+  @Throttle({ short: { limit: 10, ttl: 60000 } })
   @ApiOperation({
     summary: 'Join a game',
     description:
